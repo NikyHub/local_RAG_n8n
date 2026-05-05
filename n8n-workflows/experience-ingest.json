@@ -1,0 +1,214 @@
+{
+  "name": "RAG - 经验入库流",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "experience-ingest",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000001",
+      "name": "Webhook Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fetch approved experience from database\n// report_id comes from the review workflow trigger\nconst body = $input.first().json;\nconst reportId = body.report_id;\n\nif (!reportId) {\n  throw new Error('report_id is required');\n}\n\nreturn {\n  report_id: reportId,\n  reviewer_id: body.reviewer_id || '',\n};"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000002",
+      "name": "Parse Trigger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, user_id, title, fault_description, solution, photos, machine_type FROM experience_reports WHERE id = $1 AND status = 'approved'",
+        "additionalFields": {
+          "parameters": "={{ [$json.report_id].join('|||SPLIT|||') }}"
+        }
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000003",
+      "name": "Fetch Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [750, 300],
+      "credentials": {
+        "postgres": "factory-rag-postgres"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build structured knowledge text from experience report\nconst row = $input.first().json;\n\n// Handle Postgres result format (may be row object or rows array)\nconst report = row.rows ? row.rows[0] : row;\n\nif (!report) {\n  throw new Error('Report not found or not approved');\n}\n\n// Structure the experience as instructional knowledge\nconst structuredText = `【经验案例】\n故障现象：${report.fault_description}\n\n解决方案：${report.solution}\n\n适用机型：${report.machine_type || '通用'}\n\n提交人ID：${report.user_id}\n审核状态：已审核通过\n\n---\n详细操作步骤：${report.solution}`;\n\nreturn {\n  report_id: report.id,\n  title: report.title,\n  user_id: report.user_id,\n  machine_type: report.machine_type || '',\n  full_text: structuredText,\n  fault_description: report.fault_description,\n  solution: report.solution,\n  ingest_id: 'exp_' + report.id,\n};"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000004",
+      "name": "Structure Experience",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://document-service:8002/api/chunk",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.full_text }}"
+            },
+            {
+              "name": "chunk_size",
+              "value": "={{ 500 }}"
+            },
+            {
+              "name": "chunk_overlap",
+              "value": "={{ 50 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000005",
+      "name": "Chunk Experience",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare chunks for batch embedding\nconst result = $input.first().json;\nconst chunks = result.chunks || [];\nconst expData = $('Structure Experience').first().json;\n\nreturn chunks.map(chunk => ({\n  chunk_index: chunk.chunk_index,\n  text: chunk.text,\n  ingest_id: expData.ingest_id,\n  report_id: expData.report_id,\n  title: expData.title,\n  machine_type: expData.machine_type,\n  user_id: expData.user_id,\n}));"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000006",
+      "name": "Prepare Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch embed all chunk texts\nconst items = $input.all();\nconst texts = items.map(item => item.json.text);\n\nreturn {\n  texts,\n  item_count: items.length,\n  ingest_id: items[0]?.json?.ingest_id,\n  report_id: items[0]?.json?.report_id,\n  title: items[0]?.json?.title,\n  machine_type: items[0]?.json?.machine_type,\n  user_id: items[0]?.json?.user_id,\n};"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000007",
+      "name": "Build Embed Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://document-service:8002/api/embed",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "texts",
+              "value": "={{ JSON.stringify($json.texts) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000008",
+      "name": "Batch Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble Qdrant points with experience metadata\nconst embedResult = $input.first().json;\nconst embeddings = embedResult.embeddings || [];\nconst chunkItems = $('Prepare Items').all();\nconst meta = $('Build Embed Batch').first().json;\n\nconst points = chunkItems.map((item, i) => ({\n  id: item.json.ingest_id + '_' + item.json.chunk_index,\n  vector: embeddings[i] || [],\n  payload: {\n    doc_type: 'experience',\n    machine_type: item.json.machine_type,\n    category: 'troubleshooting',\n    chunk_text: item.json.text,\n    chunk_index: item.json.chunk_index,\n    source_title: item.json.title,\n    report_id: item.json.report_id,\n    submitted_by: item.json.user_id,\n    ingest_id: item.json.ingest_id,\n    created_at: new Date().toISOString(),\n  }\n}));\n\nreturn {\n  points,\n  point_count: points.length,\n  report_id: meta.report_id,\n  title: meta.title,\n};"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000009",
+      "name": "Assemble Qdrant Points",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/factory_knowledge/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.points }) }}",
+        "options": {}
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000010",
+      "name": "Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final response\nconst meta = $('Assemble Qdrant Points').first().json;\n\nreturn {\n  status: 'ok',\n  message: '经验知识已入库',\n  report_id: meta.report_id,\n  title: meta.title,\n  chunk_count: meta.point_count,\n};"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000011",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2750, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Response').first().json) }}"
+      },
+      "id": "e1f2g3h4-0001-4000-8000-000000000012",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Ingest": {
+      "main": [[{"node": "Parse Trigger", "type": "main", "index": 0}]]
+    },
+    "Parse Trigger": {
+      "main": [[{"node": "Fetch Report", "type": "main", "index": 0}]]
+    },
+    "Fetch Report": {
+      "main": [[{"node": "Structure Experience", "type": "main", "index": 0}]]
+    },
+    "Structure Experience": {
+      "main": [[{"node": "Chunk Experience", "type": "main", "index": 0}]]
+    },
+    "Chunk Experience": {
+      "main": [[{"node": "Prepare Items", "type": "main", "index": 0}]]
+    },
+    "Prepare Items": {
+      "main": [[{"node": "Build Embed Batch", "type": "main", "index": 0}]]
+    },
+    "Build Embed Batch": {
+      "main": [[{"node": "Batch Embed", "type": "main", "index": 0}]]
+    },
+    "Batch Embed": {
+      "main": [[{"node": "Assemble Qdrant Points", "type": "main", "index": 0}]]
+    },
+    "Assemble Qdrant Points": {
+      "main": [[{"node": "Qdrant Upsert", "type": "main", "index": 0}]]
+    },
+    "Qdrant Upsert": {
+      "main": [[{"node": "Build Response", "type": "main", "index": 0}]]
+    },
+    "Build Response": {
+      "main": [[{"node": "Respond", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  }
+}

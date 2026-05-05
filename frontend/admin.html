@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工厂知识库 - 管理后台</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+.header {
+  background: #1a73e8;
+  color: #fff;
+  padding: 14px 20px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: #fff; border-radius: 8px; padding: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; border-radius: 6px; font-size: 14px; transition: all 0.2s; }
+.tab:hover { background: #f0f0f0; }
+.tab.active { background: #1a73e8; color: #fff; }
+
+/* Cards */
+.card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.card h3 { font-size: 15px; margin-bottom: 8px; }
+.card .meta { font-size: 12px; color: #888; margin-bottom: 6px; }
+.card .meta span { margin-right: 12px; }
+.card .content { font-size: 14px; line-height: 1.6; color: #555; max-height: 120px; overflow-y: auto; background: #fafafa; padding: 8px 10px; border-radius: 4px; }
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-pending { background: #fff3e0; color: #e67e22; }
+.badge-approved { background: #e8f5e9; color: #2e7d32; }
+.badge-rejected { background: #fce4ec; color: #c62828; }
+.badge-ready { background: #e8f5e9; color: #2e7d32; }
+.badge-processing { background: #fff3e0; color: #e67e22; }
+.badge-error { background: #fce4ec; color: #c62828; }
+
+/* Buttons */
+.btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.btn-approve { background: #4caf50; color: #fff; }
+.btn-reject { background: #f44336; color: #fff; }
+.btn-view { background: #1a73e8; color: #fff; }
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.modal h2 { font-size: 17px; margin-bottom: 12px; }
+.modal textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  margin: 10px 0;
+  resize: vertical;
+}
+.modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+/* Stats */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  text-align: center;
+}
+.stat-card .number { font-size: 28px; font-weight: 700; color: #1a73e8; }
+.stat-card .label { font-size: 13px; color: #888; margin-top: 4px; }
+.empty { text-align: center; padding: 40px; color: #999; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="header">🏭 工厂知识库管理后台</div>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="review">📋 待审核</div>
+    <div class="tab" data-tab="docs">📄 文档管理</div>
+    <div class="tab" data-tab="upload">⬆️ 上传文档</div>
+    <div class="tab" data-tab="stats">📊 统计</div>
+  </div>
+
+  <!-- Review Panel -->
+  <div id="reviewPanel">
+    <div id="reviewList"></div>
+  </div>
+
+  <!-- Docs Panel -->
+  <div id="docsPanel" style="display:none;">
+    <div id="docsList"></div>
+  </div>
+
+  <!-- Upload Panel -->
+  <div id="uploadPanel" style="display:none;">
+    <div class="card">
+      <h3>上传新文档</h3>
+      <form id="uploadForm" onsubmit="uploadDoc(event)">
+        <div style="margin-bottom:10px;">
+          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">文档标题 *</label>
+          <input id="docTitle" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;" required>
+        </div>
+        <div style="margin-bottom:10px;display:flex;gap:12px;">
+          <div style="flex:1;">
+            <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">类型 *</label>
+            <select id="docType" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+              <option value="manual">操作手册</option>
+              <option value="guide">维护指南</option>
+              <option value="experience">经验案例</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">分类</label>
+            <select id="docCategory" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+              <option value="operation">操作指导</option>
+              <option value="troubleshooting">故障排除</option>
+              <option value="maintenance">维护保养</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">适用机型</label>
+          <input id="docMachine" style="width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;" placeholder="例：注塑机 海天 MA1600">
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">文件 * (PDF/图片)</label>
+          <input type="file" id="docFile" accept=".pdf,.png,.jpg,.jpeg" style="width:100%;" required>
+        </div>
+        <button type="submit" class="btn btn-approve" style="width:100%;padding:10px;">上传并入库</button>
+      </form>
+      <div id="uploadMsg" style="margin-top:10px;text-align:center;font-size:14px;"></div>
+    </div>
+  </div>
+
+  <!-- Stats Panel -->
+  <div id="statsPanel" style="display:none;">
+    <div class="stats">
+      <div class="stat-card"><div class="number" id="statQueries">-</div><div class="label">今日查询</div></div>
+      <div class="stat-card"><div class="number" id="statDocs">-</div><div class="label">文档总数</div></div>
+      <div class="stat-card"><div class="number" id="statChunks">-</div><div class="label">知识块数</div></div>
+      <div class="stat-card"><div class="number" id="statPending">-</div><div class="label">待审核</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Review Modal -->
+<div class="modal-overlay" id="reviewModal">
+  <div class="modal">
+    <h2 id="modalTitle">审核经验报告</h2>
+    <div id="modalContent"></div>
+    <div>
+      <label style="font-size:13px;color:#555;display:block;margin-bottom:4px;">审核意见</label>
+      <textarea id="reviewComment" placeholder="通过可留空，驳回请说明原因..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-reject" onclick="doReview('rejected')">驳回</button>
+      <button class="btn btn-approve" onclick="doReview('approved')">通过</button>
+      <button class="btn btn-view" onclick="closeModal()">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const WEBHOOK_BASE = localStorage.getItem('rag_webhook_base') || 'http://localhost:5678/webhook/';
+const USER_ID = localStorage.getItem('rag_user_id') || 'admin_001';
+let currentReportId = null;
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+    const name = this.dataset.tab;
+    ['review','docs','upload','stats'].forEach(id => {
+      document.getElementById(id + 'Panel').style.display = id === name ? 'block' : 'none';
+    });
+    if (name === 'review') loadReviews();
+    if (name === 'docs') loadDocs();
+    if (name === 'stats') loadStats();
+  });
+});
+
+async function loadReviews() {
+  // Reviews are fetched from experience_reports table via n8n
+  // For now, show instructions
+  document.getElementById('reviewList').innerHTML =
+    '<div class="card"><h3>审核管理</h3><p style="color:#888;font-size:14px;">审核功能需要连接到后端数据库。<br>请在 n8n 中配置一条查询待审核报告的 workflow，或直接通过 PostgreSQL 连接查看。</p>' +
+    '<p style="color:#888;font-size:13px;margin-top:8px;">Workflow webhook: <code>' + WEBHOOK_BASE + 'review</code></p></div>';
+}
+
+async function loadDocs() {
+  document.getElementById('docsList').innerHTML =
+    '<div class="card"><h3>文档管理</h3><p style="color:#888;font-size:14px;">文档列表通过 PostgreSQL 查询获取。<br>请在 n8n 中创建文档查询的 workflow，或直接连接数据库查看。</p></div>';
+}
+
+async function loadStats() {
+  document.getElementById('statQueries').textContent = '-';
+  document.getElementById('statDocs').textContent = '-';
+  document.getElementById('statChunks').textContent = '-';
+  document.getElementById('statPending').textContent = '-';
+}
+
+function openReviewModal(reportId, title, fault, solution) {
+  currentReportId = reportId;
+  document.getElementById('modalTitle').textContent = '审核：' + title;
+  document.getElementById('modalContent').innerHTML =
+    '<p style="font-size:13px;color:#888;margin-bottom:8px;">故障现象：</p>' +
+    '<div class="content" style="margin-bottom:12px;">' + escHtml(fault) + '</div>' +
+    '<p style="font-size:13px;color:#888;margin-bottom:8px;">解决方案：</p>' +
+    '<div class="content">' + escHtml(solution) + '</div>';
+  document.getElementById('reviewModal').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('reviewModal').classList.remove('show');
+  currentReportId = null;
+}
+
+async function doReview(action) {
+  if (!currentReportId) return;
+  const comment = document.getElementById('reviewComment').value.trim();
+
+  try {
+    await fetch(WEBHOOK_BASE + 'review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reviewer_id: USER_ID,
+        report_id: currentReportId,
+        action,
+        review_comment: comment,
+      }),
+    });
+    closeModal();
+    document.getElementById('reviewComment').value = '';
+    loadReviews();
+  } catch (err) {
+    alert('审核失败：' + err.message);
+  }
+}
+
+async function uploadDoc(e) {
+  e.preventDefault();
+  const file = document.getElementById('docFile').files[0];
+  if (!file) return alert('请选择文件');
+
+  const msg = document.getElementById('uploadMsg');
+  msg.style.color = '#888';
+  msg.textContent = '上传中...';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('title', document.getElementById('docTitle').value);
+  formData.append('doc_type', document.getElementById('docType').value);
+  formData.append('category', document.getElementById('docCategory').value);
+  formData.append('machine_type', document.getElementById('docMachine').value);
+  formData.append('uploaded_by', USER_ID);
+  formData.append('original_filename', file.name);
+  formData.append('mime_type', file.type);
+  formData.append('file_path', '/data/files/' + file.name);
+
+  try {
+    const resp = await fetch(WEBHOOK_BASE + 'doc-ingest', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+    msg.style.color = '#2e7d32';
+    msg.textContent = '文档入库成功！' + (data.chunk_count ? ' 生成 ' + data.chunk_count + ' 个知识块。' : '');
+    document.getElementById('uploadForm').reset();
+  } catch (err) {
+    msg.style.color = '#c62828';
+    msg.textContent = '上传失败：' + err.message;
+  }
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Initial load
+loadReviews();
+</script>
+</body>
+</html>

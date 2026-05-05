@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工厂知识助手</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f5f5;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.header {
+  background: #1a73e8;
+  color: #fff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.header .role-badge {
+  font-size: 12px;
+  background: rgba(255,255,255,0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: #fff;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  padding: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+
+/* Chat area */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.message {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.message.user {
+  align-self: flex-end;
+  background: #1a73e8;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.message.assistant {
+  align-self: flex-start;
+  background: #fff;
+  color: #333;
+  border: 1px solid #e0e0e0;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.message .sources {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+  font-size: 12px;
+  color: #888;
+}
+.message .sources span {
+  display: inline-block;
+  background: #e8f0fe;
+  color: #1a73e8;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin: 2px;
+}
+.message .confidence {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+.message .no-result {
+  color: #e67e22;
+  font-weight: 500;
+}
+.loading {
+  align-self: flex-start;
+  padding: 10px 14px;
+  color: #999;
+  font-size: 13px;
+}
+
+/* Experience form */
+.form-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: none;
+}
+.form-area.visible { display: block; }
+.form-group {
+  margin-bottom: 12px;
+}
+.form-group label {
+  display: block;
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.form-group input, .form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
+.form-group textarea { min-height: 80px; }
+.form-group .hint { font-size: 11px; color: #999; margin-top: 2px; }
+
+.submit-btn {
+  width: 100%;
+  padding: 10px;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.success-msg {
+  padding: 12px;
+  background: #e6f4ea;
+  color: #1e8e3e;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 14px;
+  display: none;
+}
+
+/* Input bar */
+.input-bar {
+  display: flex;
+  padding: 10px;
+  background: #fff;
+  border-top: 1px solid #e0e0e0;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.input-bar input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+.input-bar input:focus { border-color: #1a73e8; }
+.input-bar button {
+  padding: 10px 18px;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span>🏭 工厂知识助手</span>
+  <span class="role-badge" id="roleBadge">工人</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="query">💬 知识查询</div>
+  <div class="tab" data-tab="submit">📝 提交经验</div>
+</div>
+
+<!-- Query tab -->
+<div id="queryPanel" class="chat-area">
+  <div class="message assistant">
+    你好！我是工厂知识助手。<br>
+    可以问我设备操作、故障排除等问题，我会从知识库中查找答案。
+  </div>
+</div>
+
+<!-- Submit tab -->
+<div id="submitPanel" class="form-area">
+  <div class="form-group">
+    <label>故障标题 *</label>
+    <input id="expTitle" placeholder="例：注塑机液压油温度过高">
+  </div>
+  <div class="form-group">
+    <label>故障现象 *</label>
+    <textarea id="expFault" placeholder="详细描述故障现象..."></textarea>
+  </div>
+  <div class="form-group">
+    <label>解决方案 *</label>
+    <textarea id="expSolution" placeholder="描述你是如何解决的，尽可能详细..."></textarea>
+  </div>
+  <div class="form-group">
+    <label>适用机型</label>
+    <input id="expMachine" placeholder="例：海天 MA1600">
+  </div>
+  <div class="success-msg" id="submitSuccess">经验报告已提交，等待班长审核。</div>
+  <button class="submit-btn" id="submitBtn" onclick="submitExperience()">提交经验报告</button>
+</div>
+
+<div class="input-bar" id="inputBar">
+  <input id="queryInput" placeholder="输入你的问题..." onkeydown="if(event.key==='Enter') sendQuery()">
+  <button onclick="sendQuery()">发送</button>
+</div>
+
+<script>
+const WEBHOOK_BASE = localStorage.getItem('rag_webhook_base') || 'http://localhost:5678/webhook/';
+const USER_ID = getUserId();
+
+function getUserId() {
+  // Allow override via URL param or localStorage
+  const urlParams = new URLSearchParams(window.location.search);
+  const fromUrl = urlParams.get('user_id');
+  if (fromUrl) {
+    localStorage.setItem('rag_user_id', fromUrl);
+    return fromUrl;
+  }
+  return localStorage.getItem('rag_user_id') || 'worker_001';
+}
+
+function getUserRole() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('role') || 'worker';
+}
+
+// Init
+(function init() {
+  const role = getUserRole();
+  const roleNames = { worker: '工人', leader: '班长', manager: '组长' };
+  document.getElementById('roleBadge').textContent = roleNames[role] || role;
+})();
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+    const tabName = this.dataset.tab;
+    document.getElementById('queryPanel').style.display = tabName === 'query' ? 'flex' : 'none';
+    document.getElementById('submitPanel').classList.toggle('visible', tabName === 'submit');
+    document.getElementById('inputBar').style.display = tabName === 'query' ? 'flex' : 'none';
+  });
+});
+
+function addMessage(role, text, sources, confidence) {
+  const chatArea = document.getElementById('queryPanel');
+  const div = document.createElement('div');
+  div.className = 'message ' + role;
+
+  if (role === 'assistant' && sources && sources.length > 0) {
+    const srcTags = sources.map(s => `<span>${escHtml(s.title)} (${Math.round(s.score*100)}%)</span>`).join('');
+    div.innerHTML = escHtml(text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') +
+      `<div class="sources">📎 参考来源：${srcTags}</div>` +
+      `<div class="confidence">置信度：${Math.round(confidence * 100)}%</div>`;
+  } else if (role === 'assistant' && confidence === 0) {
+    div.innerHTML = `<span class="no-result">${escHtml(text)}</span>`;
+  } else {
+    div.textContent = text;
+  }
+
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  return div;
+}
+
+function addLoading() {
+  const chatArea = document.getElementById('queryPanel');
+  const div = document.createElement('div');
+  div.className = 'loading';
+  div.textContent = '正在查询知识库...';
+  div.id = 'loadingMsg';
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  return div;
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function sendQuery() {
+  const input = document.getElementById('queryInput');
+  const question = input.value.trim();
+  if (!question) return;
+
+  addMessage('user', question);
+  input.value = '';
+  const loading = addLoading();
+
+  try {
+    const resp = await fetch(WEBHOOK_BASE + 'query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: USER_ID,
+        question,
+        session_id: sessionId(),
+      }),
+    });
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    loading.remove();
+
+    if (data.found !== false) {
+      addMessage('assistant', data.answer, data.sources, data.confidence);
+    } else {
+      addMessage('assistant', data.answer || '抱歉，未找到相关信息。', [], 0);
+    }
+  } catch (err) {
+    loading.remove();
+    addMessage('assistant', '查询失败，请稍后重试。如果持续出现此问题，请联系管理员。', [], 0);
+  }
+}
+
+async function submitExperience() {
+  const title = document.getElementById('expTitle').value.trim();
+  const fault = document.getElementById('expFault').value.trim();
+  const solution = document.getElementById('expSolution').value.trim();
+  const machine = document.getElementById('expMachine').value.trim();
+
+  if (!title || !fault || !solution) {
+    alert('请填写故障标题、故障现象和解决方案');
+    return;
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '提交中...';
+
+  try {
+    const resp = await fetch(WEBHOOK_BASE + 'experience-submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: USER_ID,
+        title,
+        fault_description: fault,
+        solution,
+        machine_type: machine,
+        photos: [],
+      }),
+    });
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    document.getElementById('submitSuccess').style.display = 'block';
+    document.getElementById('expTitle').value = '';
+    document.getElementById('expFault').value = '';
+    document.getElementById('expSolution').value = '';
+    document.getElementById('expMachine').value = '';
+  } catch (err) {
+    alert('提交失败：' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '提交经验报告';
+    setTimeout(() => {
+      document.getElementById('submitSuccess').style.display = 'none';
+    }, 3000);
+  }
+}
+
+function sessionId() {
+  let sid = sessionStorage.getItem('rag_session_id');
+  if (!sid) {
+    sid = 'sess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    sessionStorage.setItem('rag_session_id', sid);
+  }
+  return sid;
+}
+</script>
+</body>
+</html>
