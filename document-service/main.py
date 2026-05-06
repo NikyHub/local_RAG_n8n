@@ -4,7 +4,9 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import httpx
-from fastapi import FastAPI, HTTPException
+import tempfile
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from paddleocr import PaddleOCR
 from pydantic import BaseModel
 
@@ -168,6 +170,61 @@ async def embed_texts(req: EmbedRequest):
             raise HTTPException(502, f"Embedding service error: {resp.text}")
         data = resp.json()
     return EmbedResult(embeddings=data["embeddings"])
+
+
+# ── Upload endpoints (accept binary files, no disk write needed) ──────
+
+@app.post("/api/parse/pdf/upload", response_model=ParseResult)
+async def parse_pdf_upload(file: UploadFile = File(...)):
+    """Parse a PDF file from uploaded binary data (no disk path required)."""
+    content = await file.read()
+    doc = fitz.open(stream=content, filetype="pdf")
+    pages = []
+
+    for i, page in enumerate(doc):
+        text = page.get_text("text")
+        if text.strip():
+            pages.append({
+                "page_number": i + 1,
+                "text": text.strip(),
+                "char_count": len(text),
+            })
+
+    doc.close()
+    full_text = "\n\n".join(p["text"] for p in pages)
+
+    return ParseResult(
+        pages=pages,
+        full_text=full_text,
+        page_count=len(pages),
+    )
+
+
+@app.post("/api/parse/image/upload")
+async def parse_image_upload(file: UploadFile = File(...)):
+    """OCR an image from uploaded binary data."""
+    content = await file.read()
+    # Save to temp file for PaddleOCR (it requires a file path)
+    suffix = ".png" if file.filename and file.filename.endswith(".png") else ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = ocr.ocr(tmp_path, cls=True)
+        if not result or not result[0]:
+            return {"text": "", "lines": []}
+
+        lines = []
+        for line in result[0]:
+            text = line[1][0]
+            confidence = line[1][1]
+            lines.append({"text": text, "confidence": round(confidence, 4)})
+
+        full_text = "\n".join(l["text"] for l in lines)
+        return {"text": full_text, "lines": lines}
+    finally:
+        os.unlink(tmp_path)
 
 
 # ── Health ────────────────────────────────────────────────────────────
