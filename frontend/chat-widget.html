@@ -245,7 +245,7 @@ body {
 </div>
 
 <script>
-const WEBHOOK_BASE = localStorage.getItem('rag_webhook_base') || 'http://localhost:5678/webhook/';
+const WEBHOOK_BASE = localStorage.getItem('rag_webhook_base') || 'http://localhost:5678/webhook-test/';
 const USER_ID = getUserId();
 
 function getUserId() {
@@ -289,7 +289,13 @@ function addMessage(role, text, sources, confidence) {
   div.className = 'message ' + role;
 
   if (role === 'assistant' && sources && sources.length > 0) {
-    const srcTags = sources.map(s => `<span>${escHtml(s.title)} (${Math.round(s.score*100)}%)</span>`).join('');
+    const srcTags = sources.map(s => {
+      let tag = `<span>${escHtml(s.title)} (${Math.round(s.score*100)}%)</span>`;
+            if (s.file_url && s.file_url.length > 30) {
+        tag += ` <img src="${escHtml(s.file_url)}"onerror="this.style.display='none'"style="max-width:180px;max-height:150px;border-radius:6px;margin-top:6px;cursor:pointer;" onclick="window.open(this.src)" />`;
+      } 
+      return tag;
+    }).join('');
     div.innerHTML = escHtml(text).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') +
       `<div class="sources">📎 参考来源：${srcTags}</div>` +
       `<div class="confidence">置信度：${Math.round(confidence * 100)}%</div>`;
