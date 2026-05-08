@@ -4,8 +4,8 @@
     {
       "name": "frontend",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "."],
-      "port": 8080,
+      "runtimeArgs": ["-m", "http.server", "9000", "--directory", "."],
+      "port": 9000,
       "cwd": "frontend"
     }
   ]
