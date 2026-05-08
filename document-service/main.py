@@ -1,5 +1,6 @@
 import os
 import re
+import uuid #保存的图片id
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -7,6 +8,7 @@ import httpx
 import tempfile
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse #带文件下载路径
 from paddleocr import PaddleOCR
 from pydantic import BaseModel
 
@@ -202,32 +204,42 @@ async def parse_pdf_upload(file: UploadFile = File(...)):
 
 @app.post("/api/parse/image/upload")
 async def parse_image_upload(file: UploadFile = File(...)):
-    """OCR an image from uploaded binary data."""
+    """OCR an image from uploaded binary data. Saves original to FILES_DIR."""
     content = await file.read()
-    # Save to temp file for PaddleOCR (it requires a file path)
-    suffix = ".png" if file.filename and file.filename.endswith(".png") else ".jpg"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-
-    try:
-        result = ocr.ocr(tmp_path, cls=True)
-        if not result or not result[0]:
-            return {"text": "", "lines": []}
-
-        lines = []
-        for line in result[0]:
-            text = line[1][0]
-            confidence = line[1][1]
-            lines.append({"text": text, "confidence": round(confidence, 4)})
-
-        full_text = "\n".join(l["text"] for l in lines)
-        return {"text": full_text, "lines": lines}
-    finally:
-        os.unlink(tmp_path)
+    
+    # 先把原图永久保存
+    original_name = file.filename or 'image.jpg'
+    ext = original_name.rsplit('.', 1)[-1] if '.' in original_name else 'jpg'
+    saved_name = f"{uuid.uuid4().hex}.{ext}"
+    os.makedirs(FILES_DIR, exist_ok=True)
+    saved_path = os.path.join(FILES_DIR, saved_name)
+    with open(saved_path, 'wb') as f:
+        f.write(content)
+    
+    # OCR 用同一个文件路径
+    result = ocr.ocr(saved_path, cls=True)
+    
+    if not result or not result[0]:
+        return {"text": "", "lines": [], "file_path": saved_name}
+    
+    lines = []
+    for line in result[0]:
+        text = line[1][0]
+        confidence = line[1][1]
+        lines.append({"text": text, "confidence": round(confidence, 4)})
+    
+    full_text = "\n".join(l["text"] for l in lines)
+    return {"text": full_text, "lines": lines, "file_path": saved_name}
 
 
 # ── Health ────────────────────────────────────────────────────────────
+@app.get("/files/{filename}") #带图片下载路径
+def serve_file(filename: str):
+    file_path = os.path.join(FILES_DIR, filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(404, f"File not found: {filename}")
+    return FileResponse(file_path)
+
 
 @app.get("/api/health")
 def health():
