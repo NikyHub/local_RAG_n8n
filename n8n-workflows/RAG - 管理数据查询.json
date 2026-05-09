@@ -1,0 +1,150 @@
+{
+  "name": "RAG - 管理数据查询",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "admin-data",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b7657e73-6f77-49a3-9905-f5eb8c34516f",
+      "name": "Webhook Admin Data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        -432
+      ],
+      "webhookId": "5ccd294f-82ad-4a64-8462-24319f5fcbc3"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, title, doc_type, machine_type, status, chunk_count, created_at FROM documents ORDER BY created_at DESC LIMIT 20",
+        "options": {}
+      },
+      "id": "4324ea5a-5278-4ced-922c-84a6a8be1ddf",
+      "name": "Query Documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        -432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT COUNT(*) FROM query_logs WHERE created_at >= CURRENT_DATE) AS today_queries, (SELECT COUNT(*) FROM documents WHERE status = 'ready') AS total_docs, (SELECT COUNT(*) FROM knowledge_chunks) AS total_chunks, (SELECT COUNT(*) FROM experience_reports WHERE status = 'pending') AS pending_reports",
+        "options": {}
+      },
+      "id": "170da842-f81f-4977-b192-52e88b81b526",
+      "name": "Query Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        -432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const docs = $('Query Documents').first().json.rows || [];\nconst statsRow = ($input.first().json.rows || [{}])[0];\n\nreturn {\n  docs: docs.map(d => ({\n    id: d.id,\n    title: d.title,\n    doc_type: d.doc_type,\n    machine_type: d.machine_type,\n    status: d.status,\n    chunk_count: d.chunk_count,\n    created_at: d.created_at,\n  })),\n  stats: {\n    today_queries: parseInt(statsRow.today_queries) || 0,\n    total_docs: parseInt(statsRow.total_docs) || 0,\n    total_chunks: parseInt(statsRow.total_chunks) || 0,\n    pending_reports: parseInt(statsRow.pending_reports) || 0,\n  },\n};"
+      },
+      "id": "a36340b5-4c78-4681-9a06-718f61d17ef6",
+      "name": "Merge & Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -432
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Merge & Format').first().json) }}",
+        "options": {}
+      },
+      "id": "17d230bb-d471-41ba-8c0a-be3889107872",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -432
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Admin Data": {
+      "main": [
+        [
+          {
+            "node": "Query Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Documents": {
+      "main": [
+        [
+          {
+            "node": "Query Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Stats": {
+      "main": [
+        [
+          {
+            "node": "Merge & Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge & Format": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ede4e5a2-6831-4c43-87c8-308ccd9dbf43",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "56df9cd4230a2548003c13079e85a5c1044e06c1d9d084e4e9d100a86b79ebf6"
+  },
+  "id": "n4D7nObeIgOeiw61",
+  "tags": []
+}

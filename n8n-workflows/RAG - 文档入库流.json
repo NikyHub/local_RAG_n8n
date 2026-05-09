@@ -1,0 +1,560 @@
+{
+  "name": "RAG - 文档入库流",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e9bf2094-df20-45dd-be06-12bcb44027e7",
+      "name": "Webhook Receive",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        -32
+      ],
+      "webhookId": "e898cd1e-c36c-4afb-bdd5-ab720ad1a77f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst binary = $input.first().binary;\nconst fileKey = Object.keys(binary || {})[0];\n\nreturn [{\n  json: {\n    title: body.title || 'Untitled Document',\n    doc_type: body.doc_type || 'manual',\n    machine_type: body.machine_type || '',\n    category: body.category || '',\n    uploaded_by: body.uploaded_by || '',\n    original_filename: body.original_filename || '',\n    file_path: body.file_path || '',\n    mime_type: body.mime_type || '',\n    file_type: (body.mime_type || '').includes('pdf') ? 'pdf' : ((body.mime_type || '').includes('image') ? 'image' : 'unknown'),\n    ingest_id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),\n  },\n  binary: fileKey ? {\n    file: binary[fileKey]\n  } : {}\n}];"
+      },
+      "id": "88e23f79-2e71-4ecb-9796-41a8df97b07c",
+      "name": "Extract Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.file_type }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1359c2be-9c17-4d83-a7c5-96a04eeeed57"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.file_type }}",
+                    "rightValue": "image",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "90a238f8-330b-4648-968d-32c0da6e9bc0"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "64384e00-26b7-4a32-88cd-17b801f47549",
+      "name": "Route by File Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -192,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/parse/pdf/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "79a62c4e-e201-4b1f-b87b-d62e99f08fcb",
+      "name": "Parse PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        64,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/parse/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "28217122-a623-405b-bede-504440084569",
+      "name": "Parse Image OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        64,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge parse result with original metadata\nconst parsed = $input.first().json;\nconst meta = $('Extract Metadata').first().json;\n\nreturn {\n  ...meta,\n  full_text: parsed.full_text || parsed.text || '',\n  page_count: parsed.page_count || parsed.pages?.length || 1,\n  pages: parsed.pages || [],\n  source_file: parsed.file_path || '',\n  ingest_id: meta.ingest_id,\n};"
+      },
+      "id": "ad3d319f-c9ed-4a3e-948b-2261ce8c5b82",
+      "name": "Merge Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/chunk",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.full_text }}"
+            },
+            {
+              "name": "chunk_size",
+              "value": "={{ 500 }}"
+            },
+            {
+              "name": "chunk_overlap",
+              "value": "={{ 50 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "35c83ac8-2791-4cc6-9c9e-59e0fe113784",
+      "name": "Chunk Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        576,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split chunk response into individual items for embedding\nconst result = $input.first().json;\nconst chunks = result.chunks || [];\n\n// Return each chunk as a separate output item\nreturn chunks.map(chunk => ({\n  chunk_index: chunk.chunk_index,\n  text: chunk.text,\n  char_count: chunk.char_count,\n  source_file: $('Merge Parse Result').first().json.source_file || '',\n  ingest_id: $('Merge Parse Result').first().json.ingest_id,\n  title: $('Merge Parse Result').first().json.title,\n  doc_type: $('Merge Parse Result').first().json.doc_type,\n  machine_type: $('Merge Parse Result').first().json.machine_type,\n  category: $('Merge Parse Result').first().json.category,\n  uploaded_by: $('Merge Parse Result').first().json.uploaded_by,\n  page_count: $('Merge Parse Result').first().json.page_count,\n}));"
+      },
+      "id": "f3e58e3c-3889-4fc7-b036-5eb67c458787",
+      "name": "Prepare Chunk Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all chunk texts for batch embedding\nconst items = $input.all();\nconst chunkTexts = items.map(item => item.json.text);\n\n// Batch embed all chunks at once\nreturn {\n  texts: chunkTexts,\n  item_count: items.length,\n  // Preserve original items in the workflow\n  ingest_id: items[0]?.json?.ingest_id,\n};"
+      },
+      "id": "c929757e-c5f6-4764-b31a-52bc6a072b4d",
+      "name": "Build Embed Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ texts: $json.texts }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "5986b29f-8b2e-44bc-9e10-a38733ca0400",
+      "name": "Batch Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1328,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuid4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {\n    var r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\n\nconst embedResult = $input.first().json;\nconst embeddings = embedResult.embeddings || [];\nconst chunkItems = $('Prepare Chunk Items').all();\n\nconst points = chunkItems.map((item, i) => ({\n  id: uuid4(),\n  vector: embeddings[i] || [],\n  payload: {\n    doc_type: item.json.doc_type,\n    machine_type: item.json.machine_type,\n    category: item.json.category,\n    chunk_text: item.json.text,\n    chunk_index: item.json.chunk_index,\n    source_title: item.json.title,\n    source_file: item.json.source_file || '',\n    uploaded_by: item.json.uploaded_by,\n    ingest_id: item.json.ingest_id,\n    created_at: new Date().toISOString(),\n  }\n}));\n\nreturn {\n  points,\n  point_count: points.length,\n  ingest_id: chunkItems[0]?.json?.ingest_id,\n  title: chunkItems[0]?.json?.title,\n  doc_type: chunkItems[0]?.json?.doc_type,\n  category: chunkItems[0]?.json?.category,\n  machine_type: chunkItems[0]?.json?.machine_type,\n  uploaded_by: chunkItems[0]?.json?.uploaded_by,\n  chunk_details: chunkItems.map(c => ({\n    chunk_index: c.json.chunk_index,\n    content: c.json.text,\n  })),\n};"
+      },
+      "id": "f8ffb0f8-8aa9-4fc3-86ba-433548c3a301",
+      "name": "Assemble Qdrant Points",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://host.docker.internal:32768/collections/factory_knowledge/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.points }) }}",
+        "options": {}
+      },
+      "id": "09e1f060-5e9c-4cbd-b7d5-5401a4e99245",
+      "name": "Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1824,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "id": "2aadd656-c9b0-46f0-a95c-4431693bd9bf",
+      "name": "Insert Document Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        -32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const docId = $input.first().json.id || $input.first().json.rows?.[0]?.id;\nconst assemblerData = $('Prepare PG Insert').first().json;\nconst chunks = assemblerData.chunk_details || [];\n\nreturn chunks.map((chunk, i) => ({\n  document_id: docId,\n  chunk_index: chunk.chunk_index,\n  content: chunk.content,\n  qdrant_point_id: assemblerData.ingest_id + '_' + chunk.chunk_index,\n  sql: `INSERT INTO knowledge_chunks (document_id, chunk_index, content, qdrant_point_id) VALUES ('${docId || ''}', ${chunk.chunk_index}, '${(chunk.content || '').replace(/'/g, \"''\")}', '${assemblerData.ingest_id}_${chunk.chunk_index}')`,\n}));"
+      },
+      "id": "a69c46a4-fb7d-4141-a6d4-5cb4ce23db73",
+      "name": "Prepare Chunk Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "id": "19fe5f97-caea-4051-a51f-8e0a7863af54",
+      "name": "Insert Chunk Records",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2784,
+        -32
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'ok', message: '文档入库完成', document_id: $('Insert Document Record').first().json.id || $('Insert Document Record').first().json.rows?.[0]?.id, chunk_count: $('Assemble Qdrant Points').first().json.point_count, title: $('Assemble Qdrant Points').first().json.title }) }}",
+        "options": {}
+      },
+      "id": "9e7c0c44-3589-4abb-8e8b-16f1897792c1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        3024,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Assemble Qdrant Points').first().json;\n\n// 直接拼 SQL，不用 $1 $2 参数化\nconst sql = `INSERT INTO documents (title, doc_type, file_path, uploaded_by, chunk_count, status, machine_type, category)\nVALUES ('${(meta.title || '').replace(/'/g, \"''\")}', '${(meta.doc_type || '').replace(/'/g, \"''\")}', '${(meta.file_path || '').replace(/'/g, \"''\")}', '${(meta.uploaded_by || '').replace(/'/g, \"''\")}', ${meta.point_count || 0}, 'ready', '${(meta.machine_type || '').replace(/'/g, \"''\")}', '${(meta.category || '').replace(/'/g, \"''\")}') RETURNING id`;\n\nreturn {\n  sql,\n  ...meta,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        -32
+      ],
+      "id": "da03ea4b-1bce-45a3-a5c8-6e8b9a91dc2d",
+      "name": "Prepare PG Insert"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Receive": {
+      "main": [
+        [
+          {
+            "node": "Extract Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metadata": {
+      "main": [
+        [
+          {
+            "node": "Route by File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by File Type": {
+      "main": [
+        [
+          {
+            "node": "Parse PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Image OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse PDF": {
+      "main": [
+        [
+          {
+            "node": "Merge Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Image OCR": {
+      "main": [
+        [
+          {
+            "node": "Merge Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Chunk Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Text": {
+      "main": [
+        [
+          {
+            "node": "Prepare Chunk Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Chunk Items": {
+      "main": [
+        [
+          {
+            "node": "Build Embed Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embed Batch": {
+      "main": [
+        [
+          {
+            "node": "Batch Embed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Embed": {
+      "main": [
+        [
+          {
+            "node": "Assemble Qdrant Points",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Qdrant Points": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Upsert": {
+      "main": [
+        [
+          {
+            "node": "Prepare PG Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Document Record": {
+      "main": [
+        [
+          {
+            "node": "Prepare Chunk Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Chunk Records": {
+      "main": [
+        [
+          {
+            "node": "Insert Chunk Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Chunk Records": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PG Insert": {
+      "main": [
+        [
+          {
+            "node": "Insert Document Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Hong_Kong",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "b64fad1a-1ed9-4ba1-b903-8b0326dfd630",
+  "meta": {
+    "instanceId": "56df9cd4230a2548003c13079e85a5c1044e06c1d9d084e4e9d100a86b79ebf6"
+  },
+  "id": "mqPDmI74Om6c7j4b",
+  "tags": []
+}

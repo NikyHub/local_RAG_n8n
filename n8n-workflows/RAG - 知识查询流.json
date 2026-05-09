@@ -1,0 +1,469 @@
+{
+  "name": "RAG - 知识查询流",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "53ec64bd-61f4-45b3-b3f8-42a2dabf14d8",
+      "name": "Webhook Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        -80
+      ],
+      "webhookId": "37319336-4bbe-4ebf-b213-b3ac22db4b95"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and normalize input\nconst raw = $input.first().json;\nconst body = raw.body || raw;  // n8n webhook 有时包一层\nconst question = (body.question || '').trim();\nconst userId = body.user_id || '';\nconst sessionId = body.session_id || '';\nconst topK = body.top_k || 5;\nconst scoreThreshold = body.score_threshold || 0.5;\n\nif (!question) {\n  throw new Error('question is required');\n}\n\n// Basic text normalization (trim extra spaces, normalize punctuation)\nconst normalized = question\n  .replace(/\\s+/g, ' ')\n  .replace(/[\\u2018\\u2019]/g, \"'\")\n  .replace(/[\\u201c\\u201d]/g, '\"');\n\nreturn {\n  original_question: question,\n  normalized_question: normalized,\n  user_id: userId,\n  session_id: sessionId,\n  top_k: topK,\n  score_threshold: scoreThreshold,\n  query_id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),\n};"
+      },
+      "id": "4edcbef5-31e6-420b-baf4-d2189dcfbfb4",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ texts: [$json.normalized_question] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "016be5bd-46bb-4fec-abaa-623fa69de457",
+      "name": "Embed Question",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1056,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract query vector and prepare Qdrant search request\nconst embedResult = $input.first().json;\nconst queryVector = embedResult.embeddings?.[0] || [];\nconst meta = $('Validate Input').first().json;\n\nreturn {\n  vector: queryVector,\n  limit: meta.top_k,\n  score_threshold: meta.score_threshold,\n  with_payload: true,\n  with_vector: false,\n  query_id: meta.query_id,\n  user_id: meta.user_id,\n  session_id: meta.session_id,\n  original_question: meta.original_question,\n};"
+      },
+      "id": "1d24e6f4-9c35-4eb5-a022-56fb046c717c",
+      "name": "Build Search Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -832,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:32768/collections/factory_knowledge/points/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vector: $json.vector, limit: $json.limit, score_threshold: $json.score_threshold, with_payload: true, with_vector: false }) }}",
+        "options": {}
+      },
+      "id": "2fd80d11-d360-4c46-a5f6-31565f022d4e",
+      "name": "Qdrant Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -608,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "is not empty",
+                    "operator": {
+                      "type": "array",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "e7841d63-5032-4a09-b6bb-b902369fbb06"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "=1"
+        }
+      },
+      "id": "486773dc-ffb3-4554-9bcc-e4b7f092118b",
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -384,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No relevant results found - return safe fallback response\nconst meta = $('Build Search Request').first().json;\n\nreturn {\n  answer: '抱歉，未找到相关信息。建议联系班长或组长获取帮助。',\n  sources: [],\n  confidence: 0,\n  found: false,\n  query_id: meta.query_id,\n  user_id: meta.user_id,\n  session_id: meta.session_id,\n  original_question: meta.original_question,\n};"
+      },
+      "id": "1cf0a976-9b24-4279-a940-c052607974e1",
+      "name": "Build No-Result Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the RAG prompt with retrieved chunks as reference\nconst searchResult = $('Qdrant Search').first().json;\nconst meta = $('Build Search Request').first().json;\nconst results = searchResult.result || [];\n\n// Format retrieved chunks with metadata\nconst references = results.map((r, i) => {\n  const p = r.payload || {};\n  return {\n    index: i + 1,\n    text: p.chunk_text || '',\n    source: p.source_title || '未知来源',\n    doc_type: p.doc_type || '',\n    category: p.category || '',\n    machine_type: p.machine_type || '',\n    source_file: p.source_file || '',\n    score: r.score || 0,\n  };\n});\n\n// Build strict prompt\n// 取对话历史\nconst historyNode = $('历史Postgres').first().json;\nconst rows = historyNode.rows || [];\nconst historyText = rows.length > 0\n  ? '对话历史：\\n' + rows.map(r => `问：${r.question}\\n答：${r.answer}`).reverse().join('\\n') + '\\n\\n'\n  : '';\nconst systemPrompt =historyText + `你是一个工厂设备知识助手。请严格根据以下参考资料回答问题。\n\n规则：\n1. 只能基于提供的参考资料回答，不得编造信息\n2. 如果参考资料中没有相关内容，回答\"抱歉，未找到相关信息，建议联系班长或组长\"\n3. 回答要简洁明了，适合一线工人阅读\n4. 如涉及安全操作，必须在回答中使用**加粗**提醒\n5. 标注信息来源（文档名称）\n\n参考资料：\n${references.map(ref => `[${ref.index}] 来源: ${ref.source} (相关性: ${(ref.score * 100).toFixed(0)}%)\\n${ref.text}`).join('\\n\\n')}\n\n用户问题：${meta.original_question}`;\n\nreturn {\n  messages: [\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: meta.original_question }\n  ],\n  temperature: 0.1,\n  max_tokens: 2000,\n  references,\n  query_id: meta.query_id,\n  user_id: meta.user_id,\n  session_id: meta.session_id,\n  original_question: meta.original_question,\n};"
+      },
+      "id": "f0ec3f5c-a2dc-44ed-a7e6-371252a582b1",
+      "name": "Build RAG Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer sk-e3049c9fc89b40f396cbe00fe4fa791c"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'deepseek-v4-pro', messages: $json.messages, temperature: $json.temperature, max_tokens: $json.max_tokens }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "55de8df6-1fe3-430a-a940-d3a3b5967036",
+      "name": "Call DeepSeek",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        512,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse DeepSeek response and format output\nconst llmResponse = $input.first().json;\nconst promptData = $('Build RAG Prompt').first().json;\nconst content = llmResponse.choices?.[0]?.message?.content || llmResponse.message?.content || '';\n\n// Calculate average score of retrieved chunks\nconst scores = promptData.references.map(r => r.score);\nconst avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;\n\nreturn {\n  answer: content,\n  sources: promptData.references.map(r => ({\n    title: r.source,\n    type: r.doc_type,\n    score: Math.round(r.score * 100) / 100,\n    file_url: r.source_file ? 'http://localhost:8002/files/' + r.source_file : null,\n  })),\n  confidence: Math.round(avgScore * 100) / 100,\n  found: true,\n  query_id: promptData.query_id,\n  user_id: promptData.user_id,\n  session_id: promptData.session_id,\n  original_question: promptData.original_question,\n};"
+      },
+      "id": "fea08429-ebfb-491e-a453-c0298f59b5ae",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "id": "45aacc4e-c699-41db-8d56-5081a6fdf14a",
+      "name": "Log Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        -176
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Format Response').first().json) }}",
+        "options": {}
+      },
+      "id": "e4e6b27e-33e1-42c2-9ef0-66ce0a6804f8",
+      "name": "Respond with Answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1408,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build No-Result Response').first().json) }}",
+        "options": {}
+      },
+      "id": "23c3b0d1-3651-4eb7-96a8-41585d25b300",
+      "name": "Respond No Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        64,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst esc = (s) => (s || '').replace(/'/g, \"''\");\n\nreturn {\n  sql: `INSERT INTO query_logs (user_id, question, answer, sources, confidence, session_id) VALUES ('${esc(data.user_id)}', '${esc(data.original_question)}', '${esc(data.answer)}', '${esc(JSON.stringify(data.sources))}', ${data.confidence || 0}, '${esc(data.session_id || '')}')`,\n  ...data\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        -176
+      ],
+      "id": "7e5287e3-5505-496b-93e4-341c34ff2506",
+      "name": "Build Log SQL"
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Build Search Request').first().json;\nconst current = $input.first().json;\nreturn {\n  ...current,\n  history_sql: \"SELECT question, answer FROM query_logs WHERE session_id = '\" + meta.session_id + \"' AND answer NOT LIKE '%未找到%' ORDER BY created_at DESC LIMIT 5\",\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        -176
+      ],
+      "id": "f49ae603-c415-447a-9398-12adb49fed05",
+      "name": "Build History SQL"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.history_sql }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        64,
+        -176
+      ],
+      "id": "fd2b55b0-a9d8-43fe-8cb7-bfc83c95b14b",
+      "name": "历史Postgres",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Query": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Embed Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Question": {
+      "main": [
+        [
+          {
+            "node": "Build Search Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Request": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Search": {
+      "main": [
+        [
+          {
+            "node": "Has Results?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Results?": {
+      "main": [
+        [
+          {
+            "node": "Build No-Result Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build History SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build RAG Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call DeepSeek": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Build Log SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Query": {
+      "main": [
+        [
+          {
+            "node": "Respond with Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build No-Result Response": {
+      "main": [
+        [
+          {
+            "node": "Respond No Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Log SQL": {
+      "main": [
+        [
+          {
+            "node": "Log Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build History SQL": {
+      "main": [
+        [
+          {
+            "node": "历史Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "历史Postgres": {
+      "main": [
+        [
+          {
+            "node": "Build RAG Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8ece1908-99d6-4162-a850-1bf6c38989dd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "56df9cd4230a2548003c13079e85a5c1044e06c1d9d084e4e9d100a86b79ebf6"
+  },
+  "id": "g7HRAPZlLBI4cTY1",
+  "tags": []
+}

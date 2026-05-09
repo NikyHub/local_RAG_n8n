@@ -1,0 +1,735 @@
+{
+  "name": "RAG - 经验提交流+RAG - 审核处理流后RAG - 经验入Qdrant库流",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "experience-submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "66c4fd99-a5bd-4db3-bda9-bec16a036342",
+      "name": "Webhook Submit",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        544,
+        192
+      ],
+      "webhookId": "6bb9629e-dee3-4234-bca9-60b2afa0d868"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate experience report input\nconst body = $input.first().json.body || $input.first().json;\n\nconst required = ['user_id', 'title', 'fault_description', 'solution'];\nconst missing = required.filter(f => !body[f]);\n\nif (missing.length > 0) {\n  throw new Error(`Missing required fields: ${missing.join(', ')}`);\n}\n\nreturn {\n  user_id: body.user_id,\n  title: body.title.trim(),\n  fault_description: body.fault_description.trim(),\n  solution: body.solution.trim(),\n  photos: Array.isArray(body.photos) ? body.photos : (body.photos ? [body.photos] : []),\n  machine_type: body.machine_type || '',\n  report_id: 'exp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),\n  created_at: new Date().toISOString(),\n};"
+      },
+      "id": "db1f02d6-4f6d-4cdd-9ce2-1342cf0d20b9",
+      "name": "Validate & Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "id": "db8d78b6-46b9-4172-8e10-c2762cfcb2e3",
+      "name": "Save Report to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        192
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build notification payload for the team leader\nconst data = $('Validate & Normalize').first().json;\n\n// This payload is ready to send to WeCom/DingTalk/Email webhook\n// Replace the notification_url with actual webhook when configuring\nreturn {\n  msgtype: 'text',\n  text: {\n    content: `【新经验报告待审核】\\n标题：${data.title}\\n提交人ID：${data.user_id}\\n故障描述：${data.fault_description.slice(0, 100)}${data.fault_description.length > 100 ? '...' : ''}\\n时间：${data.created_at}\\n\\n请登录系统进行审核。`\n  },\n  report_id: data.report_id,\n  user_id: data.user_id,\n  title: data.title,\n};"
+      },
+      "id": "29e9d8b5-c9a1-45cc-8f6c-dcc184dc40d4",
+      "name": "Build Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst esc = (s) => (s || '').replace(/'/g, \"''\");\nreturn {\n  ...data,\n  sql: \"INSERT INTO experience_reports (id, user_id, title, fault_description, solution, photos, machine_type, status) VALUES ('\" + esc(data.report_id) + \"', '\" + esc(data.user_id) + \"', '\" + esc(data.title) + \"', '\" + esc(data.fault_description) + \"', '\" + esc(data.solution) + \"', '\" + esc(JSON.stringify(data.photos)) + \"', '\" + esc(data.machine_type || '') + \"', 'pending')\"\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        192
+      ],
+      "id": "7c221d86-d1db-4ba7-8706-323a536a0195",
+      "name": "Build Save SQL"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "fromEmail": "501399867@qq.com",
+        "toEmail": "501399867@qq.com",
+        "subject": "=【故障解决方案待审核】{{ $json.title }}",
+        "message": "=💥故障报告及解决方案💥\n\n\n故障原因:\n{{ $json.text.content }}\n\n解决方案:\n{{ $('Build Save SQL').item.json.solution }}\n",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "✅批准",
+            "disapproveLabel": "❌拒绝"
+          }
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1664,
+        192
+      ],
+      "id": "fab87eb9-3b59-489b-9d59-04f1f0620afe",
+      "name": "Send message and wait for response",
+      "webhookId": "c5e027ad-2c78-4139-ae50-d01b1dd6fce7",
+      "credentials": {
+        "smtp": {
+          "id": "OeEnglVJ3qRQxhKa",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.update_sql }}",
+        "options": {}
+      },
+      "id": "e6008853-3b67-40ab-b518-aece5ab206bd",
+      "name": "Update Report Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "approved",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "75cc481e-096b-4637-91dd-e9389adbe607"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "id": "4881e42e-b696-4411-94fd-ae69a0773fe3",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "rejected",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "id": "ea9d8b63-bf7c-4739-a180-400ef28b0166",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        2112,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Response1').first().json) }}",
+        "options": {}
+      },
+      "id": "ef4fe49b-6def-4641-a4a1-cdaf468866dd",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        5424,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.update_sql }}",
+        "options": {}
+      },
+      "id": "af163e27-6544-4773-b113-69fcd1ef0574",
+      "name": "Update Report Status1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        288
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const emailData = $input.first().json;\nconst report = $('Validate & Normalize').first().json;\nconst esc = (s) => (s || '').replace(/'/g, \"''\");\n\n// 先打印看结构\nconst raw = JSON.stringify(emailData);\nconst isApprove = emailData.approve === true || \n                  (emailData.data && emailData.data.approved === true) ||\n                  (emailData.json && emailData.json.approved === true);\nconst action = isApprove ? 'approved' : 'rejected';\n\nreturn {\n  report_id: report.report_id,\n  action: action,\n  raw_email_output: raw,\n  update_sql: \"UPDATE experience_reports SET status = '\" + action + \"', reviewer_id = 'email-admin', review_comment = '', reviewed_at = NOW() WHERE id = '\" + esc(report.report_id) + \"'\",\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1888,
+        192
+      ],
+      "id": "a749e5e4-2bb0-4c33-9603-b57acf542b9c",
+      "name": "Process Review"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "{{ $json.sql }}",
+        "options": {}
+      },
+      "id": "c75ff1b3-99fe-4825-8d88-7836d7a2bab6",
+      "name": "Fetch Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2784,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "cXOMu2cEGIvlPthv",
+          "name": "Postgres_user_n8n"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.first().json;\n\n// Handle Postgres result format (may be row object or rows array)\nconst report = row.rows ? row.rows[0] : row;\n\nif (!report) {\n  throw new Error('Report not found or not approved');\n}\n\n// Structure the experience as instructional knowledge\nconst structuredText = `【经验案例】\n故障现象：${report.fault_description}\n\n解决方案：${report.solution}\n\n适用机型：${report.machine_type || '通用'}\n\n提交人ID：${report.user_id}\n审核状态：已审核通过\n\n---\n详细操作步骤：${report.solution}`;\n\nreturn {\n  report_id: report.id,\n  title: report.title,\n  user_id: report.user_id,\n  machine_type: report.machine_type || '',\n  full_text: structuredText,\n  fault_description: report.fault_description,\n  solution: report.solution,\n  photos: report.photos || [],\n  ingest_id: 'exp_' + report.id,\n};"
+      },
+      "id": "38e95e9f-b9bc-4778-a5df-6389c52b6111",
+      "name": "Structure Experience",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3008,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/chunk",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{ $json.full_text }}"
+            },
+            {
+              "name": "chunk_size",
+              "value": "={{ 500 }}"
+            },
+            {
+              "name": "chunk_overlap",
+              "value": "={{ 50 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6064e023-8b0e-4b0d-acaf-7461b8c2ef4f",
+      "name": "Chunk Experience",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3856,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst chunks = result.chunks || [];\nconst expData = $('Merge OCR Results').first().json;\n\nreturn chunks.map(chunk => ({\n  chunk_index: chunk.chunk_index,\n  text: chunk.text,\n  ingest_id: expData.ingest_id,\n  report_id: expData.report_id,\n  title: expData.title,\n  machine_type: expData.machine_type,\n  user_id: expData.user_id,\n  source_files: expData.source_files || [],\n}));"
+      },
+      "id": "cadb54ab-5361-4235-bf8c-62567aaf2a2b",
+      "name": "Prepare Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Batch embed all chunk texts\nconst items = $input.all();\nconst texts = items.map(item => item.json.text);\n\nreturn {\n  texts,\n  item_count: items.length,\n  ingest_id: items[0]?.json?.ingest_id,\n  report_id: items[0]?.json?.report_id,\n  title: items[0]?.json?.title,\n  source_files: items[0]?.json?.source_files || [],\n  machine_type: items[0]?.json?.machine_type,\n  user_id: items[0]?.json?.user_id,\n};"
+      },
+      "id": "9657605a-9c48-49b5-aced-37d6fa03e7ff",
+      "name": "Build Embed Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4304,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ texts: $json.texts }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "bd12a5a2-0606-49aa-a7d4-f35e5b8c23b5",
+      "name": "Batch Embed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        4528,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuid4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {\n    var r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\n// Assemble Qdrant points with experience metadata\nconst embedResult = $input.first().json;\nconst embeddings = embedResult.embeddings || [];\nconst chunkItems = $('Prepare Items').all();\nconst meta = $('Build Embed Batch').first().json;\n\nconst points = chunkItems.map((item, i) => ({\n  id: uuid4(),\n  vector: embeddings[i] || [],\n  payload: {\n    doc_type: 'experience',\n    machine_type: item.json.machine_type,\n    category: 'troubleshooting',\n    chunk_text: item.json.text,\n    chunk_index: item.json.chunk_index,\n    source_title: item.json.title,\n    source_file: item.json.source_files?.[0] || '',\n    report_id: item.json.report_id,\n    submitted_by: item.json.user_id,\n    ingest_id: item.json.ingest_id,\n    created_at: new Date().toISOString(),\n  }\n}));\n\nreturn {\n  points,\n  point_count: points.length,\n  report_id: meta.report_id,\n  title: meta.title,\n};"
+      },
+      "id": "ba554c12-0469-40dc-9fd4-896e8c0dbc18",
+      "name": "Assemble Qdrant Points",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4752,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://host.docker.internal:32768/collections/factory_knowledge/points",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ points: $json.points }) }}",
+        "options": {}
+      },
+      "id": "0e4717d1-3c40-4cdb-8ca2-83e21cd90185",
+      "name": "Qdrant Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        4976,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Process Review').first().json;\nconst esc = (s) => (s || '').replace(/'/g, \"''\");\nreturn {\n  ...data,\n  sql: \"SELECT id, user_id, title, fault_description, solution, photos, machine_type FROM experience_reports WHERE id = '\" + esc(data.report_id) + \"' AND status = 'approved'\"\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        96
+      ],
+      "id": "a3b780dd-d654-475d-a761-5bac47bceed5",
+      "name": "Build Fetch SQL"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final response\nconst meta = $('Assemble Qdrant Points').first().json;\n\nreturn {\n  status: 'ok',\n  message: '经验知识已入库',\n  report_id: meta.report_id,\n  title: meta.title,\n  chunk_count: meta.point_count,\n};"
+      },
+      "id": "62904332-7606-4043-8224-c57e64a463cf",
+      "name": "Build Response1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5200,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const report = $input.first().json;\nlet photosRaw = report.photos || [];\nlet photos = [];\nif (typeof photosRaw === 'string') {\n  try { photos = JSON.parse(photosRaw); } catch(e) { photos = []; }\n} else if (Array.isArray(photosRaw)) {\n  photos = photosRaw;\n}\n\nif (photos.length === 0) {\n  return [{\n    json: {\n      ...report,\n      ocr_texts: [],\n      source_files: [],\n      full_text: report.full_text,\n    }\n  }];\n}\n\nreturn photos.map((p, i) => ({\n  json: {\n    ...report,\n    photo_index: i,\n    photo_name: p.name || ('photo' + i + '.jpg'),\n  },\n  binary: {\n    file: {\n      data: (p.data || '').includes(',') ? (p.data || '').split(',')[1] : (p.data || ''),\n      mimeType: 'image/' + ((p.name || 'jpg').split('.').pop()),\n      fileName: p.name || ('photo' + i + '.jpg'),\n    }\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3216,
+        96
+      ],
+      "id": "24c63666-755f-4641-9817-b5e64c35f525",
+      "name": "base64 to binary"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ocr-container:8002/api/parse/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3424,
+        96
+      ],
+      "id": "9f3ca335-4a0d-402a-bad8-a3dba1f8cb67",
+      "name": "ocr_parse_photo"
+    },
+    {
+      "parameters": {
+        "jsCode": "const report = $('Structure Experience').first().json;\nconst allOcr = $input.all().map(item => item.json);\nconst ocrTexts = allOcr.map(o => o.text || '').filter(t => t);\nconst sourceFiles = allOcr.map(o => o.file_path || '').filter(f => f);\n\nreturn {\n  ...report,\n  full_text: report.full_text + (ocrTexts.length > 0 ? '\\n\\n[图片内容]\\n' + ocrTexts.join('\\n') : ''),\n  source_files: sourceFiles,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3632,
+        96
+      ],
+      "id": "c9f2ef5b-5e22-4da6-bdee-878d7590ca0c",
+      "name": "Merge OCR Results"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Submit": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize": {
+      "main": [
+        [
+          {
+            "node": "Build Save SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Report to DB": {
+      "main": [
+        [
+          {
+            "node": "Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification": {
+      "main": [
+        [
+          {
+            "node": "Send message and wait for response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Save SQL": {
+      "main": [
+        [
+          {
+            "node": "Save Report to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Report Status": {
+      "main": [
+        [
+          {
+            "node": "Build Fetch SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [
+          {
+            "node": "Update Report Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Report Status1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message and wait for response": {
+      "main": [
+        [
+          {
+            "node": "Process Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Review": {
+      "main": [
+        [
+          {
+            "node": "Route by Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Report": {
+      "main": [
+        [
+          {
+            "node": "Structure Experience",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structure Experience": {
+      "main": [
+        [
+          {
+            "node": "base64 to binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Experience": {
+      "main": [
+        [
+          {
+            "node": "Prepare Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Items": {
+      "main": [
+        [
+          {
+            "node": "Build Embed Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embed Batch": {
+      "main": [
+        [
+          {
+            "node": "Batch Embed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch Embed": {
+      "main": [
+        [
+          {
+            "node": "Assemble Qdrant Points",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Qdrant Points": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Upsert": {
+      "main": [
+        [
+          {
+            "node": "Build Response1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Fetch SQL": {
+      "main": [
+        [
+          {
+            "node": "Fetch Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response1": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "base64 to binary": {
+      "main": [
+        [
+          {
+            "node": "ocr_parse_photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ocr_parse_photo": {
+      "main": [
+        [
+          {
+            "node": "Merge OCR Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge OCR Results": {
+      "main": [
+        [
+          {
+            "node": "Chunk Experience",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4c6379b8-a364-46d6-be3b-3922d0508123",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "56df9cd4230a2548003c13079e85a5c1044e06c1d9d084e4e9d100a86b79ebf6"
+  },
+  "id": "RqPSL4mrjhZ6ICGO",
+  "tags": []
+}

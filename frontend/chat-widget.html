@@ -234,8 +234,14 @@ body {
   <div class="form-group">
     <label>适用机型</label>
     <input id="expMachine" placeholder="例：海天 MA1600">
+      </div>
+  <div class="form-group"> 
+    <label>故障照片</label>
+    <input type="file" id="expPhotos" accept=".png,.jpg,.jpeg" multiple>
+    <div class="hint">可多选，支持PNG/JPG</div>
   </div>
-  <div class="success-msg" id="submitSuccess">经验报告已提交，等待班长审核。</div>
+  <div class="success-msg" id="submitSuccess">✅ 经验报告已提交，等待领导审批。<br/>📧 请留意邮箱通知审批结果。</div>
+  
   <button class="submit-btn" id="submitBtn" onclick="submitExperience()">提交经验报告</button>
 </div>
 
@@ -365,7 +371,17 @@ async function submitExperience() {
   const fault = document.getElementById('expFault').value.trim();
   const solution = document.getElementById('expSolution').value.trim();
   const machine = document.getElementById('expMachine').value.trim();
-
+  // ↓ 提交经验添加图片
+  const photoFiles = document.getElementById('expPhotos').files;
+  const photos = [];
+  for (const f of photoFiles) {
+    const base64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(f);
+    });
+    photos.push({ name: f.name, data: base64 });
+  }// ↑ 提交经验添加图片
   if (!title || !fault || !solution) {
     alert('请填写故障标题、故障现象和解决方案');
     return;
@@ -385,7 +401,7 @@ async function submitExperience() {
         fault_description: fault,
         solution,
         machine_type: machine,
-        photos: [],
+        photos,
       }),
     });
 
