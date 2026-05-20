@@ -1,52 +1,52 @@
 version: "3.8"
 
 services:
+  # ── 工作流编排引擎 ──
   n8n:
     image: n8nio/n8n:latest
-    container_name: factory-rag-n8n
+    container_name: n8n
     restart: unless-stopped
     ports:
       - "5678:5678"
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_USER=${N8N_ADMIN_USER:-admin}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_ADMIN_PASSWORD:-changeme}
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
-      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-changeme1234567890}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-PleaseChangeMeTo32Chars!!}
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=n8n
       - DB_POSTGRESDB_USER=n8n
-      - DB_POSTGRESDB_PASSWORD=${N8N_DB_PASSWORD:-n8n_secret}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD:-factory_rag_2024}
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./n8n-workflows:/home/node/.n8n/workflows
-      - ./files:/data/files
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - factory-rag
 
+  # ── 数据库 ──
   postgres:
     image: postgres:15-alpine
-    container_name: factory-rag-postgres
+    container_name: pg_daoshu
     restart: unless-stopped
     environment:
       - POSTGRES_USER=n8n
-      - POSTGRES_PASSWORD=${N8N_DB_PASSWORD:-n8n_secret}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-factory_rag_2024}
       - POSTGRES_DB=n8n
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
-      - "5432:5432"
+      - "15432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U n8n"]
       interval: 5s
@@ -55,9 +55,10 @@ services:
     networks:
       - factory-rag
 
+  # ── 向量数据库 ──
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: factory-rag-qdrant
+    container_name: qdrant
     restart: unless-stopped
     ports:
       - "6333:6333"
@@ -69,9 +70,10 @@ services:
     networks:
       - factory-rag
 
+  # ── Embedding 模型服务 (bge-large-zh-v1.5 / 1024维) ──
   embedding-service:
     build: ./embedding-service
-    container_name: factory-rag-embedding
+    container_name: embedding-service
     restart: unless-stopped
     ports:
       - "8001:8001"
@@ -83,14 +85,15 @@ services:
     networks:
       - factory-rag
 
+  # ── 文档处理服务 (PDF解析 + OCR + 分块 + 文件存储) ──
   document-service:
     build: ./document-service
-    container_name: factory-rag-doc-service
+    container_name: ocr-container
     restart: unless-stopped
     ports:
       - "8002:8002"
     volumes:
-      - ./files:/data/files
+      - doc_files:/data/files
     environment:
       - EMBEDDING_SERVICE_URL=http://embedding-service:8001
       - FILES_DIR=/data/files
@@ -102,6 +105,7 @@ volumes:
   postgres_data:
   qdrant_data:
   embedding_cache:
+  doc_files:
 
 networks:
   factory-rag:
